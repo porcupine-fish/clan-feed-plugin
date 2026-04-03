@@ -16,4 +16,16 @@ public interface ClanFeedConfig extends Config
     {
         return "";
     }
+
+    @Secret
+    @ConfigItem(
+        keyName = "websocketKey",
+        name = "WebSocket key",
+        description = "Authentication key used when connecting to the websocket"
+    )
+    default String websocketKey()
+    {
+        return "";
+    }
+}
 }
