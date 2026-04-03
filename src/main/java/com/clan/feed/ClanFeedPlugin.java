@@ -12,7 +12,6 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -67,12 +66,17 @@ public class ClanFeedPlugin extends Plugin
     @Override
     protected void startUp()
     {
+        log.info("ClanFeedPlugin starting up");
+
         shuttingDown.set(false);
         reconnectScheduled.set(false);
 
         webSocketClient = httpClient.newBuilder()
             .pingInterval(30, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
             .build();
+
+        log.info("WebSocket client created");
 
         connectWebSocket();
     }
@@ -80,6 +84,8 @@ public class ClanFeedPlugin extends Plugin
     @Override
     protected void shutDown()
     {
+        log.info("ClanFeedPlugin shutting down");
+
         shuttingDown.set(true);
         reconnectScheduled.set(false);
 
@@ -103,6 +109,7 @@ public class ClanFeedPlugin extends Plugin
 
         if ("websocketUrl".equals(event.getKey()) || "websocketKey".equals(event.getKey()))
         {
+            log.info("WebSocket config changed, reconnecting");
             disconnectWebSocket();
             connectWebSocket();
         }
@@ -110,19 +117,26 @@ public class ClanFeedPlugin extends Plugin
 
     private void connectWebSocket()
     {
+        log.info("connectWebSocket() called");
+
         if (shuttingDown.get())
         {
+            log.info("Not connecting websocket because plugin is shutting down");
             return;
         }
 
         String wsUrl = config.websocketUrl();
+        String wsKey = config.websocketKey();
+
+        log.info("Configured websocketUrl='{}'", wsUrl);
+        log.info("Configured websocketKey present={}", wsKey != null && !wsKey.trim().isEmpty());
+
         if (wsUrl == null || wsUrl.trim().isEmpty())
         {
             log.warn("WebSocket URL is missing");
             return;
         }
 
-        String wsKey = config.websocketKey();
         if (wsKey == null || wsKey.trim().isEmpty())
         {
             log.warn("WebSocket key is missing");
@@ -137,22 +151,14 @@ public class ClanFeedPlugin extends Plugin
 
         disconnectWebSocket();
 
-        HttpUrl parsedUrl = HttpUrl.parse(wsUrl.trim());
-        if (parsedUrl == null)
-        {
-            log.warn("Invalid WebSocket URL: {}", wsUrl);
-            return;
-        }
+        String baseUrl = wsUrl.trim();
+        String authedUrl = baseUrl + (baseUrl.contains("?") ? "&" : "?") + "key=" + wsKey.trim();
 
-        HttpUrl authedUrl = parsedUrl.newBuilder()
-            .addQueryParameter("key", wsKey.trim())
-            .build();
+        log.info("Connecting websocket to {}", authedUrl);
 
         Request request = new Request.Builder()
             .url(authedUrl)
             .build();
-
-        log.info("Connecting websocket to {}", authedUrl.redact());
 
         webSocket = webSocketClient.newWebSocket(request, new WebSocketListener()
         {
@@ -166,6 +172,8 @@ public class ClanFeedPlugin extends Plugin
             @Override
             public void onMessage(@NotNull WebSocket webSocket, @NotNull String text)
             {
+                log.info("WebSocket message received: {}", text);
+
                 try
                 {
                     WebsocketMessagePayload payload = gson.fromJson(text, WebsocketMessagePayload.class);
@@ -187,9 +195,16 @@ public class ClanFeedPlugin extends Plugin
             }
 
             @Override
+            public void onClosing(@NotNull WebSocket webSocket, int code, @NotNull String reason)
+            {
+                log.info("WebSocket closing code={} reason={}", code, reason);
+            }
+
+            @Override
             public void onClosed(@NotNull WebSocket webSocket, int code, @NotNull String reason)
             {
                 log.warn("WebSocket closed code={} reason={}", code, reason);
+
                 if (ClanFeedPlugin.this.webSocket == webSocket)
                 {
                     ClanFeedPlugin.this.webSocket = null;
@@ -199,12 +214,6 @@ public class ClanFeedPlugin extends Plugin
                 {
                     scheduleReconnect();
                 }
-            }
-
-            @Override
-            public void onClosing(@NotNull WebSocket webSocket, int code, @NotNull String reason)
-            {
-                log.info("WebSocket closing code={} reason={}", code, reason);
             }
 
             @Override
@@ -221,7 +230,7 @@ public class ClanFeedPlugin extends Plugin
                 }
                 else
                 {
-                    log.warn("WebSocket failure", t);
+                    log.warn("WebSocket failure without HTTP response", t);
                 }
 
                 if (ClanFeedPlugin.this.webSocket == webSocket)
