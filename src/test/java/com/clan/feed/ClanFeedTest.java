@@ -7,7 +7,7 @@ public class ClanFeedTest
 {
   public static void main(String[] args) throws Exception {
         ExternalPluginManager.loadBuiltin(ClanFeedPlugin.class);
-        RuneLite.main(new String[]{"--developer-mode", "--disable-telemetry"});
+        RuneLite.main(args);
     }
 }
 
