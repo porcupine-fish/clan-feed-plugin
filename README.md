@@ -10,5 +10,5 @@ Payload shape for the websocket subscriber is:
 }
 ```
 
-The websockets secret key must be configured in the payload header using the key`X-WS-Key`.
+The websockets secret key must be configured in the payload header, on the server-side, using the key`X-WS-Key`.
 
