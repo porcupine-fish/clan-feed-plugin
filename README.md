@@ -9,6 +9,6 @@ Payload shape for the websocket subscriber is:
     message: string
 }
 ```
+The max length of the message is 500 characters.
 
 The websockets secret key must be configured in the payload header, on the server-side, using the key`X-WS-Key`.
-
