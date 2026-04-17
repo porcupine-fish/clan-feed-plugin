@@ -62,6 +62,7 @@ public class ClanFeedPlugin extends Plugin
 
     private final AtomicBoolean reconnectScheduled = new AtomicBoolean(false);
     private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
+    private final AtomicBoolean authFailed = new AtomicBoolean(false);
     private final AtomicInteger connectionGeneration = new AtomicInteger(0);
 
     @Provides
@@ -77,11 +78,12 @@ public class ClanFeedPlugin extends Plugin
 
         shuttingDown.set(false);
         reconnectScheduled.set(false);
+        authFailed.set(false);
         connectionGeneration.incrementAndGet();
 
         webSocketClient = httpClient.newBuilder()
             .pingInterval(30, TimeUnit.SECONDS)
-            .readTimeout(0, TimeUnit.MILLISECONDS) // Disable read timeout for websocket connections
+            .readTimeout(0, TimeUnit.MILLISECONDS)
             .build();
 
         connectWebSocket(connectionGeneration.get());
@@ -94,6 +96,7 @@ public class ClanFeedPlugin extends Plugin
 
         shuttingDown.set(true);
         reconnectScheduled.set(false);
+        authFailed.set(false);
         connectionGeneration.incrementAndGet();
 
         disconnectWebSocket();
@@ -120,6 +123,7 @@ public class ClanFeedPlugin extends Plugin
 
             int generation = connectionGeneration.incrementAndGet();
             reconnectScheduled.set(false);
+            authFailed.set(false);
 
             disconnectWebSocket();
             connectWebSocket(generation);
@@ -133,6 +137,12 @@ public class ClanFeedPlugin extends Plugin
         if (shuttingDown.get())
         {
             log.info("Not connecting websocket because plugin is shutting down");
+            return;
+        }
+
+        if (authFailed.get())
+        {
+            log.warn("Not connecting websocket because authentication previously failed. Update the config to retry.");
             return;
         }
 
@@ -206,6 +216,12 @@ public class ClanFeedPlugin extends Plugin
             return;
         }
 
+        if (authFailed.get())
+        {
+            log.warn("Skipping reconnect because websocket authentication failed. Update the config to retry.");
+            return;
+        }
+
         if (generation != connectionGeneration.get())
         {
             log.debug("Skipping reconnect schedule for stale websocket generation {}", generation);
@@ -233,6 +249,12 @@ public class ClanFeedPlugin extends Plugin
             {
                 if (shuttingDown.get())
                 {
+                    return;
+                }
+
+                if (authFailed.get())
+                {
+                    log.warn("Skipping scheduled reconnect because websocket authentication failed. Update the config to retry.");
                     return;
                 }
 
@@ -300,6 +322,7 @@ public class ClanFeedPlugin extends Plugin
                 return;
             }
 
+            authFailed.set(false);
             reconnectScheduled.set(false);
             log.info("WebSocket connected");
         }
@@ -362,7 +385,7 @@ public class ClanFeedPlugin extends Plugin
             {
                 ClanFeedPlugin.this.webSocket = null;
 
-                if (!shuttingDown.get())
+                if (!shuttingDown.get() && !authFailed.get())
                 {
                     scheduleReconnect(generation);
                 }
@@ -376,6 +399,8 @@ public class ClanFeedPlugin extends Plugin
         @Override
         public void onFailure(@NotNull WebSocket webSocket, @NotNull Throwable t, @Nullable Response response)
         {
+            boolean authenticationFailure = response != null && (response.code() == 401 || response.code() == 403);
+
             if (response != null)
             {
                 log.warn(
@@ -393,6 +418,14 @@ public class ClanFeedPlugin extends Plugin
             if (ClanFeedPlugin.this.webSocket == webSocket)
             {
                 ClanFeedPlugin.this.webSocket = null;
+
+                if (authenticationFailure)
+                {
+                    authFailed.set(true);
+                    reconnectScheduled.set(false);
+                    log.warn("WebSocket authentication failed. Check your websocket key. Auto-reconnect disabled until config changes.");
+                    return;
+                }
 
                 if (!shuttingDown.get())
                 {
