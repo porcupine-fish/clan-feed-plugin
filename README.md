@@ -3,15 +3,15 @@ A simple websockets subscriber to allow clan members to receive clan events mess
 
 <img width="238" height="240" alt="image" src="https://github.com/user-attachments/assets/86ecb228-e597-48e5-962a-3cd54c3e1eb5" />
 
-Payload shape for the websocket subscriber is:
+## Server-side
+- The JSON payload shape for the websocket subscriber is:
 ```
 { 
     message: string
 }
 ```
-The max length of the message is 500 characters.
-
-The websockets secret key must be configured in the payload header, on the server-side, using the key `X-WS-Key`.
+- The max length of the message is 500 characters.
+- The websockets secret key must be configured in the payload header, on the server-side, using the key `X-WS-Key`.
 
 ## Security
 - The broadcasts over the websocket connection must be authenticated first using the secret key specified in the Clan Feed plugin settings, the authentication check happens on the server side before the websocket connection is established otherwise it won't connect or receive broadcasts. 
