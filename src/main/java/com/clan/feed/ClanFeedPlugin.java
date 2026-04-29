@@ -17,8 +17,6 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -306,7 +304,7 @@ public class ClanFeedPlugin extends Plugin
         }
 
         @Override
-        public void onOpen(@NotNull WebSocket webSocket, @NotNull Response response)
+        public void onOpen(WebSocket webSocket, Response response)
         {
             if (generation != connectionGeneration.get())
             {
@@ -328,7 +326,7 @@ public class ClanFeedPlugin extends Plugin
         }
 
         @Override
-        public void onMessage(@NotNull WebSocket webSocket, @NotNull String text)
+        public void onMessage(WebSocket webSocket, String text)
         {
             if (generation != connectionGeneration.get())
             {
@@ -371,13 +369,13 @@ public class ClanFeedPlugin extends Plugin
         }
 
         @Override
-        public void onClosing(@NotNull WebSocket webSocket, int code, @NotNull String reason)
+        public void onClosing(WebSocket webSocket, int code, String reason)
         {
             log.info("WebSocket closing code={} reason={}", code, reason);
         }
 
         @Override
-        public void onClosed(@NotNull WebSocket webSocket, int code, @NotNull String reason)
+        public void onClosed(WebSocket webSocket, int code, String reason)
         {
             log.warn("WebSocket closed code={} reason={}", code, reason);
 
@@ -397,7 +395,7 @@ public class ClanFeedPlugin extends Plugin
         }
 
         @Override
-        public void onFailure(@NotNull WebSocket webSocket, @NotNull Throwable t, @Nullable Response response)
+        public void onFailure(WebSocket webSocket, Throwable t, Response response)
         {
             boolean authenticationFailure = response != null && (response.code() == 401 || response.code() == 403);
 
