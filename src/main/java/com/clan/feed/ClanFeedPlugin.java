@@ -6,10 +6,12 @@ import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import okhttp3.OkHttpClient;
@@ -72,8 +74,6 @@ public class ClanFeedPlugin extends Plugin
     @Override
     protected void startUp()
     {
-        log.info("ClanFeedPlugin starting up");
-
         shuttingDown.set(false);
         reconnectScheduled.set(false);
         authFailed.set(false);
@@ -84,14 +84,15 @@ public class ClanFeedPlugin extends Plugin
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .build();
 
-        connectWebSocket(connectionGeneration.get());
+        if (client.getGameState() == GameState.LOGGED_IN)
+        {
+            connectWebSocket(connectionGeneration.get());
+        }
     }
 
     @Override
     protected void shutDown()
     {
-        log.info("ClanFeedPlugin shutting down");
-
         shuttingDown.set(true);
         reconnectScheduled.set(false);
         authFailed.set(false);
@@ -108,6 +109,32 @@ public class ClanFeedPlugin extends Plugin
     }
 
     @Subscribe
+    public void onGameStateChanged(GameStateChanged event)
+    {
+        if (event.getGameState() == GameState.LOGGED_IN)
+        {
+            if (webSocket == null)
+            {
+                int generation = connectionGeneration.incrementAndGet();
+                reconnectScheduled.set(false);
+                authFailed.set(false);
+
+                connectWebSocket(generation);
+            }
+
+            return;
+        }
+
+        if (event.getGameState() == GameState.LOGIN_SCREEN && webSocket != null)
+        {
+            connectionGeneration.incrementAndGet();
+            reconnectScheduled.set(false);
+
+            disconnectWebSocket();
+        }
+    }
+
+    @Subscribe
     public void onConfigChanged(ConfigChanged event)
     {
         if (!CONFIG_NAME.equals(event.getGroup()))
@@ -117,38 +144,39 @@ public class ClanFeedPlugin extends Plugin
 
         if ("websocketUrl".equals(event.getKey()) || "websocketKey".equals(event.getKey()))
         {
-            log.info("WebSocket config changed, reconnecting");
-
             int generation = connectionGeneration.incrementAndGet();
             reconnectScheduled.set(false);
             authFailed.set(false);
 
             disconnectWebSocket();
-            connectWebSocket(generation);
+
+            if (client.getGameState() == GameState.LOGGED_IN)
+            {
+                connectWebSocket(generation);
+            }
         }
     }
 
     private void connectWebSocket(int generation)
     {
-        log.info("connectWebSocket() called");
-
         if (shuttingDown.get())
         {
-            log.info("Not connecting websocket because plugin is shutting down");
+            return;
+        }
+
+        if (client.getGameState() != GameState.LOGGED_IN)
+        {
             return;
         }
 
         if (authFailed.get())
         {
-            log.warn("Not connecting websocket because authentication previously failed. Update the config to retry.");
+            log.warn("WebSocket authentication previously failed. Update the config to retry.");
             return;
         }
 
         String wsUrl = trimToNull(config.websocketUrl());
         String wsKey = trimToNull(config.websocketKey());
-
-        log.info("Configured websocketUrl='{}'", wsUrl);
-        log.info("Configured websocketKey present={}", wsKey != null);
 
         if (wsUrl == null)
         {
@@ -164,7 +192,6 @@ public class ClanFeedPlugin extends Plugin
 
         if (webSocketClient == null)
         {
-            log.warn("WebSocket client not initialised");
             return;
         }
 
@@ -180,11 +207,9 @@ public class ClanFeedPlugin extends Plugin
         }
         catch (IllegalArgumentException e)
         {
-            log.warn("Invalid WebSocket URL: {}", wsUrl, e);
+            log.warn("Invalid WebSocket URL: {}", wsUrl);
             return;
         }
-
-        log.info("Connecting websocket to {}", wsUrl);
 
         webSocket = webSocketClient.newWebSocket(request, new ClanFeedWebSocketListener(generation));
     }
@@ -214,15 +239,18 @@ public class ClanFeedPlugin extends Plugin
             return;
         }
 
+        if (client.getGameState() != GameState.LOGGED_IN)
+        {
+            return;
+        }
+
         if (authFailed.get())
         {
-            log.warn("Skipping reconnect because websocket authentication failed. Update the config to retry.");
             return;
         }
 
         if (generation != connectionGeneration.get())
         {
-            log.debug("Skipping reconnect schedule for stale websocket generation {}", generation);
             return;
         }
 
@@ -239,30 +267,19 @@ public class ClanFeedPlugin extends Plugin
             return;
         }
 
-        log.info("Reconnecting websocket in {} seconds", RECONNECT_DELAY_SECONDS);
-
         executor.schedule(() ->
         {
             try
             {
-                if (shuttingDown.get())
+                if (
+                    !shuttingDown.get()
+                        && !authFailed.get()
+                        && generation == connectionGeneration.get()
+                        && client.getGameState() == GameState.LOGGED_IN
+                )
                 {
-                    return;
+                    connectWebSocket(generation);
                 }
-
-                if (authFailed.get())
-                {
-                    log.warn("Skipping scheduled reconnect because websocket authentication failed. Update the config to retry.");
-                    return;
-                }
-
-                if (generation != connectionGeneration.get())
-                {
-                    log.debug("Skipping stale scheduled reconnect for generation {}", generation);
-                    return;
-                }
-
-                connectWebSocket(generation);
             }
             finally
             {
@@ -308,15 +325,7 @@ public class ClanFeedPlugin extends Plugin
         {
             if (generation != connectionGeneration.get())
             {
-                log.debug("Ignoring onOpen for stale websocket generation {}", generation);
-                try
-                {
-                    webSocket.close(1000, "Stale websocket");
-                }
-                catch (Exception e)
-                {
-                    log.debug("Error closing stale websocket on open", e);
-                }
+                webSocket.close(1000, "Stale websocket");
                 return;
             }
 
@@ -330,11 +339,8 @@ public class ClanFeedPlugin extends Plugin
         {
             if (generation != connectionGeneration.get())
             {
-                log.debug("Ignoring message from stale websocket generation {}", generation);
                 return;
             }
-
-            log.debug("WebSocket message received, length={}", text.length());
 
             try
             {
@@ -352,11 +358,7 @@ public class ClanFeedPlugin extends Plugin
 
                 if (message.length() > MAX_MESSAGE_LENGTH)
                 {
-                    log.warn(
-                        "Dropping websocket message because it exceeds max length ({} > {})",
-                        message.length(),
-                        MAX_MESSAGE_LENGTH
-                    );
+                    log.warn("Dropping websocket message because it exceeds max length");
                     return;
                 }
 
@@ -364,21 +366,13 @@ public class ClanFeedPlugin extends Plugin
             }
             catch (Exception e)
             {
-                log.warn("WebSocket message parse error, raw length={}", text.length(), e);
+                log.warn("WebSocket message parse error", e);
             }
-        }
-
-        @Override
-        public void onClosing(WebSocket webSocket, int code, String reason)
-        {
-            log.info("WebSocket closing code={} reason={}", code, reason);
         }
 
         @Override
         public void onClosed(WebSocket webSocket, int code, String reason)
         {
-            log.warn("WebSocket closed code={} reason={}", code, reason);
-
             if (ClanFeedPlugin.this.webSocket == webSocket)
             {
                 ClanFeedPlugin.this.webSocket = null;
@@ -388,30 +382,12 @@ public class ClanFeedPlugin extends Plugin
                     scheduleReconnect(generation);
                 }
             }
-            else
-            {
-                log.debug("Ignoring onClosed for non-current websocket");
-            }
         }
 
         @Override
         public void onFailure(WebSocket webSocket, Throwable t, Response response)
         {
             boolean authenticationFailure = response != null && (response.code() == 401 || response.code() == 403);
-
-            if (response != null)
-            {
-                log.warn(
-                    "WebSocket failure code={} message={}",
-                    response.code(),
-                    response.message(),
-                    t
-                );
-            }
-            else
-            {
-                log.warn("WebSocket failure without HTTP response", t);
-            }
 
             if (ClanFeedPlugin.this.webSocket == webSocket)
             {
@@ -421,7 +397,7 @@ public class ClanFeedPlugin extends Plugin
                 {
                     authFailed.set(true);
                     reconnectScheduled.set(false);
-                    log.warn("WebSocket authentication failed. Check your websocket key. Auto-reconnect disabled until config changes.");
+                    log.warn("WebSocket authentication failed. Check your websocket key.");
                     return;
                 }
 
@@ -429,10 +405,6 @@ public class ClanFeedPlugin extends Plugin
                 {
                     scheduleReconnect(generation);
                 }
-            }
-            else
-            {
-                log.debug("Ignoring onFailure for non-current websocket");
             }
         }
     }
