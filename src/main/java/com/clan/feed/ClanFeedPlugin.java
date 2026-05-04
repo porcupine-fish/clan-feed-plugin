@@ -99,13 +99,6 @@ public class ClanFeedPlugin extends Plugin
         connectionGeneration.incrementAndGet();
 
         disconnectWebSocket();
-
-        if (webSocketClient != null)
-        {
-            webSocketClient.dispatcher().executorService().shutdown();
-            webSocketClient.connectionPool().evictAll();
-            webSocketClient = null;
-        }
     }
 
     @Subscribe
