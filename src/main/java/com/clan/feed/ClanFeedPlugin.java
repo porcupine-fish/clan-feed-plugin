@@ -7,11 +7,11 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
-import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import okhttp3.OkHttpClient;
@@ -99,6 +99,8 @@ public class ClanFeedPlugin extends Plugin
         connectionGeneration.incrementAndGet();
 
         disconnectWebSocket();
+
+        webSocketClient = null;
     }
 
     @Subscribe
@@ -225,6 +227,18 @@ public class ClanFeedPlugin extends Plugin
         }
     }
 
+    private void closeStaleWebSocket(WebSocket webSocket)
+    {
+        try
+        {
+            webSocket.close(1000, "Stale websocket");
+        }
+        catch (Exception e)
+        {
+            log.debug("Error while closing stale websocket", e);
+        }
+    }
+
     private void scheduleReconnect(int generation)
     {
         if (shuttingDown.get())
@@ -318,7 +332,7 @@ public class ClanFeedPlugin extends Plugin
         {
             if (generation != connectionGeneration.get())
             {
-                webSocket.close(1000, "Stale websocket");
+                closeStaleWebSocket(webSocket);
                 return;
             }
 
@@ -332,6 +346,7 @@ public class ClanFeedPlugin extends Plugin
         {
             if (generation != connectionGeneration.get())
             {
+                closeStaleWebSocket(webSocket);
                 return;
             }
 
@@ -380,7 +395,14 @@ public class ClanFeedPlugin extends Plugin
         @Override
         public void onFailure(WebSocket webSocket, Throwable t, Response response)
         {
-            boolean authenticationFailure = response != null && (response.code() == 401 || response.code() == 403);
+            if (generation != connectionGeneration.get())
+            {
+                closeStaleWebSocket(webSocket);
+                return;
+            }
+
+            boolean authenticationFailure =
+                response != null && (response.code() == 401 || response.code() == 403);
 
             if (ClanFeedPlugin.this.webSocket == webSocket)
             {
